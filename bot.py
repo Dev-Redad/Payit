@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # ==============================================================================
 
 # --- Telegram Bot ---
-TOKEN = "7303696543:AAGdGdSlI6ZfyodhbThq4gvJRiWW7fZ-8po"
+TOKEN = "7729759194:AAHBaEkkH72krZPnThl6BS93-oEf_RGqeSQ"
 ADMIN_IDS = [7223414109, 6053105336, 7381642564]
 STORAGE_CHANNEL_ID = -1002724249292
 
