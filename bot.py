@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # ==============================================================================
 
 # --- Telegram Bot ---
-TOKEN = "7876915087:AAHR33zMu1zIQXYOsD_yCYF7JKlfpyb4zNo"
+TOKEN = "7303696543:AAGdGdSlI6ZfyodhbThq4gvJRiWW7fZ-8po"
 ADMIN_IDS = [7223414109, 6053105336, 7381642564]
 STORAGE_CHANNEL_ID = -1002736992756
 
@@ -30,7 +30,7 @@ FORCE_SUBSCRIBE_CHANNEL_IDS = []
 # Default state for force subscribe on startup (True or False)
 FORCE_SUBSCRIBE_ENABLED = True
 # Default state for content protection on startup (True or False)
-PROTECT_CONTENT_ENABLED = True
+PROTECT_CONTENT_ENABLED = False
 
 # --- Razorpay (Live Mode) ---
 RAZORPAY_KEY_ID = "rzp_live_Kfvz8iobE8iUZc"
