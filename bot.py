@@ -25,11 +25,8 @@ ADMIN_IDS = [7223414109, 6053105336, 7381642564]
 STORAGE_CHANNEL_ID = -1002736992756
 
 # --- Feature Toggles & Settings ---
-# A list of channel/group IDs users must join. Leave empty to disable.
 FORCE_SUBSCRIBE_CHANNEL_IDS = [] 
-# Default state for force subscribe on startup (True or False)
 FORCE_SUBSCRIBE_ENABLED = True
-# Default state for content protection on startup (True or False)
 PROTECT_CONTENT_ENABLED = False
 
 # --- Razorpay (Live Mode) ---
@@ -40,7 +37,6 @@ RAZORPAY_KEY_SECRET = "bcPhJQ2pHTaaF94FhWCEl6eD"
 # --- END OF CONFIGURATION ---
 # ==============================================================================
 
-
 # --- Dynamic & Static Configs ---
 CATALOG_FILE = "catalog.json"
 DATABASE_FILE = "bot_database.db"
@@ -49,7 +45,7 @@ FILE_CATALOG = {}
 BOT_CONFIG = {}
 
 # --- Conversation States ---
-GET_PRODUCT_FILES, PRICE, BROADCAST_CONFIRM, DELETE_OPTION, GET_DELETE_TIME, GET_FS_PHOTO, GET_FS_TEXT, GET_START_PHOTO, GET_START_TEXT = range(9)
+GET_PRODUCT_FILES, PRICE, GET_BROADCAST_MESSAGE, BROADCAST_CONFIRM, DELETE_OPTION, GET_DELETE_TIME, GET_FS_PHOTO, GET_FS_TEXT, GET_START_PHOTO, GET_START_TEXT = range(10)
 
 # --- Config & Data Functions ---
 def load_bot_config():
@@ -100,9 +96,17 @@ def force_subscribe(func):
     def wrapper(update: Update, context: CallbackContext, *args, **kwargs):
         if not FORCE_SUBSCRIBE_ENABLED or not FORCE_SUBSCRIBE_CHANNEL_IDS or update.effective_user.id in ADMIN_IDS:
             return func(update, context, *args, **kwargs)
-        
+
         user_id = update.effective_user.id
-        channels_to_join = [cid for cid in FORCE_SUBSCRIBE_CHANNEL_IDS if context.bot.get_chat_member(chat_id=cid, user_id=user_id).status not in ['member', 'administrator', 'creator']]
+        channels_to_join = []
+        for channel_id in FORCE_SUBSCRIBE_CHANNEL_IDS:
+            try:
+                member = context.bot.get_chat_member(chat_id=channel_id, user_id=user_id)
+                if member.status not in ['member', 'administrator', 'creator']:
+                    channels_to_join.append(channel_id)
+            except Exception as e:
+                logger.warning(f"Could not check membership for user {user_id} in channel {channel_id}: {e}. Assuming they need to join.")
+                channels_to_join.append(channel_id)
 
         if not channels_to_join: return func(update, context, *args, **kwargs)
 
@@ -114,8 +118,12 @@ def force_subscribe(func):
                 invite_link = channel.invite_link or context.bot.export_chat_invite_link(channel_id)
                 buttons.append([InlineKeyboardButton(f"Join {channel.title}", url=invite_link)])
             except Exception as e:
-                logger.error(f"Could not get details for channel {channel_id}: {e}")
+                logger.error(f"Could not get invite link for channel {channel_id}: {e}")
         
+        if not buttons:
+            update.effective_message.reply_text("Error: Could not retrieve join links. Please contact an admin.")
+            return
+
         buttons.append([InlineKeyboardButton("✅ I have joined all channels", callback_data="check_join")])
         
         chat_id = update.effective_chat.id
@@ -130,7 +138,16 @@ def force_subscribe(func):
 
 def check_join_callback(update: Update, context: CallbackContext):
     query = update.callback_query; user_id = query.from_user.id
-    channels_to_join = [cid for cid in FORCE_SUBSCRIBE_CHANNEL_IDS if context.bot.get_chat_member(chat_id=cid, user_id=user_id).status not in ['member', 'administrator', 'creator']]
+    channels_to_join = []
+    for channel_id in FORCE_SUBSCRIBE_CHANNEL_IDS:
+        try:
+            member = context.bot.get_chat_member(chat_id=channel_id, user_id=user_id)
+            if member.status not in ['member', 'administrator', 'creator']:
+                channels_to_join.append(channel_id)
+        except Exception as e:
+            logger.warning(f"Could not check membership for user {user_id} in channel {channel_id}: {e}. Assuming they need to join.")
+            channels_to_join.append(channel_id)
+
     if not channels_to_join:
         query.message.delete(); query.answer("Thank you for joining!", show_alert=True)
         pending_command = context.user_data.pop('pending_command', None)
@@ -206,7 +223,7 @@ def cancel_conversation(update: Update, context: CallbackContext):
 # --- Product Creation Conversation ---
 def add_product_start(update: Update, context: CallbackContext):
     context.user_data['new_product_files'] = []
-    return get_product_files(update, context)
+    update.message.reply_text("Please send the first file for the new product.\n(Send /done when all files are uploaded)"); return GET_PRODUCT_FILES
 
 def get_product_files(update: Update, context: CallbackContext):
     if not update.message.effective_attachment: 
@@ -237,19 +254,28 @@ def get_price(update: Update, context: CallbackContext):
 
 # --- Broadcast Conversation ---
 def broadcast_start(update: Update, context: CallbackContext):
-    if not update.message.reply_to_message: return update.message.reply_text("Please reply to a message to broadcast it."), ConversationHandler.END
-    total_users = len(get_all_user_ids()); context.user_data['broadcast_message'] = update.message.reply_to_message
-    update.message.reply_text(f"Broadcast to {total_users} users?", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Yes", callback_data="confirm_broadcast"), InlineKeyboardButton("❌ No", callback_data="cancel_broadcast")]])); return BROADCAST_CONFIRM
-def broadcast_confirm(update: Update, context: CallbackContext):
-    query = update.callback_query; query.answer(); query.edit_message_text("Broadcasting...")
-    message_to_send = context.user_data['broadcast_message']; user_ids = get_all_user_ids(); success, fail = 0, 0; sent_messages = []
+    update.message.reply_text("Please send the message you want to broadcast. When you are ready, send /done."); return GET_BROADCAST_MESSAGE
+
+def get_broadcast_message(update: Update, context: CallbackContext):
+    context.user_data['broadcast_message'] = update.message
+    update.message.reply_text("Message saved. Send another message to replace it, or send /done to proceed."); return GET_BROADCAST_MESSAGE
+
+def send_broadcast(update: Update, context: CallbackContext):
+    message_to_send = context.user_data.get('broadcast_message')
+    if not message_to_send:
+        update.message.reply_text("No message was set for broadcast. Please send a message first."); return GET_BROADCAST_MESSAGE
+    
+    total_users = len(get_all_user_ids()); update.message.reply_text(f"Broadcasting to {total_users} users...")
+    user_ids = get_all_user_ids(); success, fail = 0, 0; sent_messages = []
     for user_id in user_ids:
         try:
             sent_message = context.bot.copy_message(chat_id=user_id, from_chat_id=message_to_send.chat_id, message_id=message_to_send.message_id)
             sent_messages.append({'chat_id': user_id, 'message_id': sent_message.message_id}); success += 1; time.sleep(0.1)
         except Exception as e: logger.error(f"Broadcast fail for {user_id}: {e}"); fail += 1
+    
     context.user_data['sent_messages'] = sent_messages
-    query.message.reply_text(f"📢 Done! Sent: {success}, Failed: {fail}.\n\nAuto-delete these messages?", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🗑️ Yes", callback_data="delete_yes"), InlineKeyboardButton("No", callback_data="delete_no")]])); return DELETE_OPTION
+    update.message.reply_text(f"📢 Done! Sent: {success}, Failed: {fail}.\n\nAuto-delete these messages?", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🗑️ Yes", callback_data="delete_yes"), InlineKeyboardButton("No", callback_data="delete_no")]])); return DELETE_OPTION
+
 def handle_delete_option(update: Update, context: CallbackContext):
     query = update.callback_query; query.answer()
     if query.data == "delete_no": query.edit_message_text("✅ OK. Messages will not be deleted."); context.user_data.clear(); return ConversationHandler.END
@@ -303,50 +329,4 @@ def protect_off_command(update: Update, context: CallbackContext): global PROTEC
 
 # --- Main Execution ---
 def main():
-    setup_database(); load_catalog(); load_bot_config()
-    updater = Updater(TOKEN, use_context=True, arbitrary_callback_data=True)
-    dp = updater.dispatcher; admin_filters = Filters.user(ADMIN_IDS)
-
-    # --- Conversation Handlers ---
-    add_product_conv = ConversationHandler(
-        entry_points=[MessageHandler((Filters.document | Filters.video | Filters.photo) & admin_filters, add_product_start)],
-        states={ 
-            GET_PRODUCT_FILES: [MessageHandler((Filters.document | Filters.video | Filters.photo) & ~Filters.command, get_product_files), CommandHandler('done', finish_adding_files, filters=admin_filters)],
-            PRICE: [MessageHandler(Filters.text & ~Filters.command, get_price)] 
-        },
-        fallbacks=[CommandHandler('cancel', cancel_conversation, filters=admin_filters)])
-    
-    broadcast_conv = ConversationHandler(
-        entry_points=[CommandHandler("broadcast", broadcast_start, filters=admin_filters & Filters.reply)],
-        states={ BROADCAST_CONFIRM: [CallbackQueryHandler(broadcast_confirm, pattern="^confirm_broadcast$")], DELETE_OPTION: [CallbackQueryHandler(handle_delete_option, pattern=r"^delete_")], GET_DELETE_TIME: [MessageHandler(Filters.text & ~Filters.command, get_delete_time)] },
-        fallbacks=[CallbackQueryHandler(cancel_conversation, pattern="^cancel_broadcast$"), CommandHandler('cancel', cancel_conversation, filters=admin_filters)], conversation_timeout=300)
-        
-    set_forcesub_conv = ConversationHandler(
-        entry_points=[CommandHandler("setforcesub", set_forcesub_start, filters=admin_filters)],
-        states={ 
-            GET_FS_PHOTO: [MessageHandler(Filters.photo, get_forcesub_photo), CommandHandler('skip', skip_forcesub_photo, filters=admin_filters)], 
-            GET_FS_TEXT: [MessageHandler(Filters.text & ~Filters.command, get_forcesub_text), CommandHandler('skip', skip_forcesub_text, filters=admin_filters)] 
-        },
-        fallbacks=[CommandHandler('cancel', cancel_conversation, filters=admin_filters)])
-
-    set_start_conv = ConversationHandler(
-        entry_points=[CommandHandler("setstart", set_start_message_start, filters=admin_filters)],
-        states={ 
-            GET_START_PHOTO: [MessageHandler(Filters.photo, get_start_photo), CommandHandler('skip', skip_start_photo, filters=admin_filters)], 
-            GET_START_TEXT: [MessageHandler(Filters.text & ~Filters.command, get_start_text), CommandHandler('skip', skip_start_text, filters=admin_filters)] 
-        },
-        fallbacks=[CommandHandler('cancel', cancel_conversation, filters=admin_filters)])
-
-    dp.add_handler(add_product_conv); dp.add_handler(broadcast_conv); dp.add_handler(set_forcesub_conv); dp.add_handler(set_start_conv)
-
-    # --- Command Handlers ---
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("forcesub_on", forcesub_on, filters=admin_filters)); dp.add_handler(CommandHandler("forcesub_off", forcesub_off, filters=admin_filters))
-    dp.add_handler(CommandHandler("stats", stats, filters=admin_filters)); dp.add_handler(CommandHandler("protect_on", protect_on_command, filters=admin_filters)); dp.add_handler(CommandHandler("protect_off", protect_off_command, filters=admin_filters))
-
-    # --- Callback Handlers ---
-    dp.add_handler(CallbackQueryHandler(check_join_callback, pattern="^check_join$"))
-
-    logger.info("🤖 Bot is running..."); updater.start_polling(); updater.idle()
-
-if __name__ == "__main__": main()
+    setup_database(); load_ca
