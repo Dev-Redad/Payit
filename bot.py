@@ -211,7 +211,7 @@ def check_payment_status(context: CallbackContext):
                 sent_file = context.bot.copy_message(chat_id=user_id, from_chat_id=file_info["channel_id"], message_id=file_info["message_id"], protect_content=PROTECT_CONTENT_ENABLED)
                 sent_messages.append(sent_file.message_id); time.sleep(0.5)
 
-            warning = context.bot.send_message(user_id, "⚠️ Files will be deleted in 10 minutes.")
+            warning = context.bot.send_message(user_id, "⚠️ Files will be deleted in 10 minutes.\nSave them before they get deleted.")
             sent_messages.append(warning.message_id)
             context.job_queue.run_once(delete_messages_job, 600, context={'chat_id': user_id, 'message_ids': sent_messages})
             
@@ -219,7 +219,7 @@ def check_payment_status(context: CallbackContext):
                 if not is_buyer_logged(user_id):
                     username = get_user_from_db(user_id)
                     user_identifier = f"@{username} ({user_id})" if username else f"User ID: {user_id}"
-                    notification_text = f"🎉 **First-Time Buyer!** 🎉\n\n👤 **User:** {user_identifier}\n💰 **Amount:** ₹{item['price']}"
+                    notification_text = f"👤 **User:** {user_identifier}\n💰 **Amount:** ₹{item['price']}"
                     try:
                         context.bot.send_message(LOG_CHANNEL_ID, notification_text, parse_mode=ParseMode.MARKDOWN)
                         log_new_buyer(user_id) # Log them only after a successful message send
